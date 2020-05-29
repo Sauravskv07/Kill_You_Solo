@@ -4,6 +4,7 @@ var myUsername = null;
 var partnerUsername = null;     // To store username of other peer
 var myPeerConnection = null;    // RTCPeerConnection
 var connection = null;
+var datachannel = null;
 
 function log(text) {
   var time = new Date();
@@ -150,7 +151,7 @@ function connect() {
         break;
 
       case "new-user":
-        //add new user to user list;
+        addUser(msg.user_name);
         break;
 
       case "success":
@@ -162,11 +163,11 @@ function connect() {
         {
           partnerUsername = null;
           myPeerConnection = null;
-          //dataChannel also null
-          //remove all listeners;
+          closeGameSession;
         }
-        //remove user from user list.
-
+        var id = "user_"+msg.user_name;
+        var item = document.querySelector("#"+id);
+        item.remove();
 
       case "game-offer": 
         handleGameOfferMsg(msg);
@@ -193,9 +194,6 @@ async function createPeerConnection() {
   
   log("Setting up a connection...");
 
-  // Create an RTCPeerConnection which knows to use our chosen
-  // STUN server.
-
   myPeerConnection = new RTCPeerConnection({
     iceServers: [     
       {
@@ -221,15 +219,11 @@ async function createPeerConnection() {
   myPeerConnection.onicegatheringstatechange = handleICEGatheringStateChangeEvent;
   myPeerConnection.onsignalingstatechange = handleSignalingStateChangeEvent;
   myPeerConnection.onnegotiationneeded = handleNegotiationNeededEvent;
-  
-  //need to verify
   myPeerConnection.addEventListener('datachannel', event => {
-    const dataChannel = event.channel;
+    dataChannel = event.channel;
   });
 }
 
-// Called by the WebRTC layer to let us know when it's time to
-// begin, resume, or restart ICE negotiation.
 
 async function handleNegotiationNeededEvent() {
   log("*** Negotiation needed");
@@ -238,23 +232,14 @@ async function handleNegotiationNeededEvent() {
     log("---> Creating offer");
     const offer = await myPeerConnection.createOffer();
 
-    // If the connection hasn't yet achieved the "stable" state,
-    // return to the caller. Another negotiationneeded event
-    // will be fired when the state stabilizes.
-
     if (myPeerConnection.signalingState != "stable") {
       log("     -- The connection isn't stable yet; postponing...")
       return;
     }
 
-    // Establish the offer as the local peer's current
-    // description.
-
     log("---> Setting local description to the offer");
     await myPeerConnection.setLocalDescription(offer);
-
-    // Send the offer to the remote peer.
-
+.
     log("---> Sending the offer to the remote peer");
     sendToServer({
       name: myUsername,
@@ -268,11 +253,6 @@ async function handleNegotiationNeededEvent() {
   };
 }
 
-
-// Handles |icecandidate| events by forwarding the specified
-// ICE candidate (created by our local ICE agent) to the other
-// peer through the signaling server.
-
 function handleICECandidateEvent(event) {
   if (event.candidate) {
     log("*** Outgoing ICE candidate: " + event.candidate.candidate);
@@ -285,11 +265,6 @@ function handleICECandidateEvent(event) {
   }
 }
 
-// Handle |iceconnectionstatechange| events. This will detect
-// when the ICE connection is closed, failed, or disconnected.
-//
-// This is called when the state of the ICE agent changes.
-
 function handleICEConnectionStateChangeEvent(event) {
   log("*** ICE connection state changed to " + myPeerConnection.iceConnectionState);
 
@@ -297,17 +272,10 @@ function handleICEConnectionStateChangeEvent(event) {
     case "closed":
     case "failed":
     case "disconnected":
-      closeVideoCall();
+      closeGameSession();
       break;
   }
 }
-
-// Set up a |signalingstatechange| event handler. This will detect when
-// the signaling connection is closed.
-//
-// NOTE: This will actually move to the new RTCPeerConnectionState enum
-// returned in the property RTCPeerConnection.connectionState when
-// browsers catch up with the latest version of the specification!
 
 function handleSignalingStateChangeEvent(event) {
   log("*** WebRTC signaling state changed to: " + myPeerConnection.signalingState);
@@ -324,9 +292,6 @@ function handleSignalingStateChangeEvent(event) {
 // and "complete" means gathering is complete. Note that the engine can
 // alternate between "gathering" and "complete" repeatedly as needs and
 // circumstances change.
-//
-// We don't need to do anything when this happens, but we log it to the
-// console so you can see what's going on when playing with the sample.
 
 function handleICEGatheringStateChangeEvent(event) {
   log("*** ICE gathering state changed to: " + myPeerConnection.iceGatheringState);
@@ -337,23 +302,18 @@ function addUser(user_name) {
   var i;
   var listElem = document.querySelector(".userlistbox");
   var item = document.createElement("li");
+  item.id = "user_"+user_name;
   item.appendChild(document.createTextNode(user_name));
   item.addEventListener("click", invite, false);
   listElem.appendChild(item);
 }
 
-// Close the RTCPeerConnection and reset variables so that the user can
-// make or receive another call if they wish. This is called both
-// when the user hangs up, the other user hangs up, or if a connection
-// failure is detected.
 
 function closeGameSession() {
   document.getElementById("text").disabled = true;
   document.getElementById("send").disabled = true;
 
   log("Closing the call");
-
-  // Close the RTCPeerConnection
 
   if (myPeerConnection) {
     log("--> Closing the peer connection");
@@ -364,19 +324,11 @@ function closeGameSession() {
     myPeerConnection.onicegatheringstatechange = null;
     myPeerConnection.onnotificationneeded = null;
 
-    // Close the peer connection
-
     myPeerConnection.close();
     myPeerConnection = null;
   }
 
 }
-
-// Handle a click on an item in the user list by inviting the clicked
-// user to video chat. Note that we don't actually send a message to
-// the callee here -- calling RTCPeerConnection.addTrack() issues
-// a |notificationneeded| event, so we'll let our handler for that
-// make the offer.
 
 async function invite(evt) {
   log("Starting to prepare an invitation");
@@ -386,8 +338,6 @@ async function invite(evt) {
   else 
   {
     var clickedUsername = evt.target.textContent;
-
-    // Don't allow users to call themselves, because weird.
 
     if (clickedUsername === myUsername) {
       alert("I'm afraid I can't let you play game with yourself. That would be weird.");
@@ -412,26 +362,16 @@ async function handleGameOfferMsg(msg) {
   
   partnerUsername = msg.name;
 
-  // If we're not already connected, create an RTCPeerConnection
-  // to be linked to the caller.
-
-  log("Received video chat offer from " + partnerUsername);
+  log("Received game offer from " + partnerUsername);
   if (!myPeerConnection) {
     createPeerConnection();
   }
 
-  // We need to set the remote description to the received SDP offer
-  // so that our local WebRTC layer knows how to talk to the caller.
-
   var desc = new RTCSessionDescription(msg.sdp);
-
-  // If the connection isn't stable yet, wait for it...
 
   if (myPeerConnection.signalingState != "stable") {
     log("  - But the signaling state isn't stable, so triggering rollback");
 
-    // Set the local and remove descriptions for rollback; don't proceed
-    // until both return.
     await Promise.all([
       myPeerConnection.setLocalDescription({type: "rollback"}),
       myPeerConnection.setRemoteDescription(desc)
@@ -455,14 +395,8 @@ async function handleGameOfferMsg(msg) {
   });
 }
 
-// Responds to the "video-answer" message sent to the caller
-// once the callee has decided to accept our request to talk.
-
 async function handleGameAnswerMsg(msg) {
   log("*** Call recipient has accepted our call");
-
-  // Configure the remote description, which is the SDP payload
-  // in our "video-answer" message.
 
   var desc = new RTCSessionDescription(msg.sdp);
   await myPeerConnection.setRemoteDescription(desc).catch(reportError);
